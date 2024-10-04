@@ -61,6 +61,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ax[1].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
         plt.tight_layout()
         plt.show()
+
+        # Prepare depth image for Open3D
         depth_image = (output * 255 / np.max(output)).astype('uint8')
         image_np = np.array(image_cropped)
         depth_o3d = o3d.geometry.Image(depth_image)
@@ -69,11 +71,27 @@ class MainWindow(QtWidgets.QMainWindow):
         camera_intrinsic = o3d.camera.PinholeCameraIntrinsic()
         camera_intrinsic.set_intrinsics(image_np.shape[1], image_np.shape[0], 500, 500, image_np.shape[1]/2, image_np.shape[0]/2)
         pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, camera_intrinsic)
+
         print(f"Point cloud created with {len(pcd.points)} points.")
+
         if pcd.is_empty():
             print("Point cloud is empty!")
         else:
-            o3d.visualization.draw_geometries([pcd])
+            # Estimate normals for the point cloud
+            pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            
+            # Create a mesh from the point cloud
+            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
+            print(f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles.")
+            
+            # Save mesh to OBJ file
+            obj_filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save OBJ File", "", "OBJ Files (*.obj);;All Files (*)")
+            if obj_filename:
+                o3d.io.write_triangle_mesh(obj_filename, mesh)
+                QtWidgets.QMessageBox.information(self, "Success", "Mesh saved successfully!")
+
+            # Visualize the point cloud and the mesh
+            o3d.visualization.draw_geometries([pcd, mesh])
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
