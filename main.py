@@ -9,6 +9,52 @@ from transformers import GLPNImageProcessor, GLPNForDepthEstimation
 import numpy as np
 import open3d as o3d
 
+class VisualizationWindow(QtWidgets.QWidget):
+    def __init__(self, pcd):
+        super().__init__()
+        self.pcd = pcd  # Сохраняем облако точек как атрибут
+        self.setWindowTitle("Point Cloud Visualization")
+        self.layout = QtWidgets.QVBoxLayout(self)
+
+        # Создаем кнопку для сохранения OBJ файла
+        self.save_button = QtWidgets.QPushButton("Save OBJ File")
+        self.save_button.clicked.connect(self.save_obj)
+        self.layout.addWidget(self.save_button)
+
+        # Создаем Open3D визуализатор
+        self.visualizer = o3d.visualization.Visualizer()
+        self.visualizer.create_window(window_name="Open3D Visualizer", width=800, height=600)
+        self.visualizer.add_geometry(self.pcd)
+        self.visualizer.run()
+
+    def save_obj(self):
+        # Открываем диалог выбора папки для сохранения
+        save_directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory to Save OBJ File")
+        if save_directory:
+            # Запрашиваем имя файла у пользователя
+            obj_filename, ok = QtWidgets.QInputDialog.getText(self, "Save OBJ File", "Enter the filename (without extension):")
+            if ok and obj_filename:
+                full_path = f"{save_directory}/{obj_filename}.obj"
+                
+                # Проверяем, сохраняется ли файл
+                if self.pcd.is_empty():
+                    QtWidgets.QMessageBox.warning(self, "Error", "Point cloud is empty. Cannot save.")
+                    return
+                
+                success = o3d.io.write_point_cloud(full_path, self.pcd)
+                if success:
+                    QtWidgets.QMessageBox.information(self, "Success", f"Point cloud saved successfully as {full_path}!")
+                else:
+                    QtWidgets.QMessageBox.warning(self, "Error", "Failed to save the point cloud. Check if the path is valid.")
+            else:
+                QtWidgets.QMessageBox.warning(self, "Warning", "Invalid filename.")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No directory selected.")
+
+    def closeEvent(self, event):
+        self.visualizer.destroy_window()
+        event.accept()
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -24,6 +70,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.visualize_button.clicked.connect(self.visualize_depth)
         self.image = None
         self.predicted_depth = None
+        self.pcd = None  # Объявляем переменную для облака точек
 
     def load_image(self):
         options = QtWidgets.QFileDialog.Options()
@@ -70,28 +117,19 @@ class MainWindow(QtWidgets.QMainWindow):
         rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(image_o3d, depth_o3d, convert_rgb_to_intensity=False)
         camera_intrinsic = o3d.camera.PinholeCameraIntrinsic()
         camera_intrinsic.set_intrinsics(image_np.shape[1], image_np.shape[0], 500, 500, image_np.shape[1]/2, image_np.shape[0]/2)
-        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, camera_intrinsic)
+        self.pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, camera_intrinsic)
 
-        print(f"Point cloud created with {len(pcd.points)} points.")
+        print(f"Point cloud created with {len(self.pcd.points)} points.")
 
-        if pcd.is_empty():
+        if self.pcd.is_empty():
             print("Point cloud is empty!")
         else:
             # Estimate normals for the point cloud
-            pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            self.pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
             
-            # Create a mesh from the point cloud
-            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
-            print(f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles.")
-            
-            # Save mesh to OBJ file
-            obj_filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save OBJ File", "", "OBJ Files (*.obj);;All Files (*)")
-            if obj_filename:
-                o3d.io.write_triangle_mesh(obj_filename, mesh)
-                QtWidgets.QMessageBox.information(self, "Success", "Mesh saved successfully!")
-
-            # Visualize the point cloud and the mesh
-            o3d.visualization.draw_geometries([pcd, mesh])
+            # Open visualization window
+            self.visualization_window = VisualizationWindow(self.pcd)
+            self.visualization_window.show()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
